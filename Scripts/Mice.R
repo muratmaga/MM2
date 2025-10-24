@@ -13,10 +13,6 @@ all_json_files <- list.files(path = ".", pattern = "median.*\\.json$",
 # Filter to only medianEstimates directories
 median_json_files <- all_json_files[grepl("medianEstimates", all_json_files)]
 
-# TEMPORARY: Exclude ref_4 files (incomplete analysis)
-# Remove this section when ref_4 analysis is completed
-median_json_files <- median_json_files[!grepl("ref_4", median_json_files)]
-
 cat("Found", length(median_json_files), "median estimate JSON files (excluding ref_4)\n")
 
 if (length(median_json_files) == 0) {
@@ -399,16 +395,82 @@ if (n_files == total_expected_files) {
   }
 }
 
+#adding the manual LMs
+m = dir(path = "./LMs/", patt='fcsv')
+# these are in exactly the same order as the medianEst array's 3rd dimension, but filenames differ slightly
+
+man.LM = array(NA, dim=c(51, 3, length(m)), dimnames = list(1:51, c("X","Y","Z"), m))
+for (i in 1:length(m)){
+  man.LM [,,i] = read.markups.fcsv(paste0("./LMs/", m[i]), forceLPS=TRUE)
+}
+
 
 #GPA part
-gpa = gpagen(medianEst)
-pca = gm.prcomp(gpa$coords)
+# gpa = gpagen(medianEst)
+# pca = gm.prcomp(gpa$coords)
 
 # One-liner plot
-plot(pca$x[,1:2], col=as.numeric(Replicate), pch=ifelse(Iteration=="1", 1, 3))
+# plot(pca$x[,1:2], col=as.numeric(Replicate), pch=ifelse(Iteration=="1", 1, 3))
 # Label specific points
-selected_ids <- levels(ID)[c(3,51,54)]
-for(id in selected_ids) {
-  indices <- which(ID == id)
-  text(pca$x[indices, 1], pca$x[indices, 2], substr(id, 1, 3), pos=3, cex=0.7)
+# selected_ids <- levels(ID)[c(3,51,54)]
+#for(id in selected_ids) {
+#  indices <- which(ID == id)
+#  text(pca$x[indices, 1], pca$x[indices, 2], substr(id, 1, 3), pos=3, cex=0.7)
+#}
+
+# adding manual LMs and medianEst together
+library(abind)
+combined.LM = abind(medianEst, man.LM, along=3)
+gpa_combined = gpagen(combined.LM)
+pca_combined = gm.prcomp(gpa_combined$coords) 
+
+# update Replicate factor for combined data
+Replicate = as.factor(c(as.character(Replicate), rep("manual", length(m))))
+
+# update ID factor for combined data
+ID = as.factor(c(as.character(ID), sub("\\.fcsv$", "", m)))
+
+# One-liner plot for combined data but only for Replicate != manual
+plot(pca_combined$x[Replicate!="manual",1:2], col=as.numeric(Replicate[Replicate!="manual"]), pch=ifelse(Iteration[Replicate!="manual"]=="1", 1, 3))
+
+# now add manual points
+points(pca_combined$x[Replicate=="manual",1:2], col='black', pch=4, cex=2)
+
+
+# Individual plots for each ID
+manual_ids <- sub("\\.fcsv$", "", m)
+for (i in 1:length(manual_ids)) {
+  id <- manual_ids[i]
+  
+  # Base plot with all points in gray
+  plot(pca_combined$x[Replicate!="manual",1:2], col='gray', pch=16, cex=2,
+       main=paste("Individual:", id), xlab="PC1", ylab="PC2")
+  
+  # Find indices for this specific ID in the medianEst data by order
+  # Every 61st entry starting from position i
+  id_indices <- seq(i, dim(medianEst)[3], by=61)
+  
+  # Color the points for this ID based on replicate and iteration
+  if (length(id_indices) > 0) {
+    points(pca_combined$x[id_indices, 1:2], 
+           col=as.numeric(Replicate[id_indices]), 
+           pch=ifelse(Iteration[id_indices]=="1", 1, 3), cex=2)
+  }
+  
+  # Add the manual reference point in red (manual points start after medianEst)
+  manual_index <- dim(medianEst)[3] + i
+  points(pca_combined$x[manual_index, 1], pca_combined$x[manual_index, 2], 
+         col='red', pch='+', cex=2)
 }
+
+# now calculate the rmse matrix between manual and medianEst
+n_cycles = ceiling(dim(medianEst)[3] / 61)
+rmse.matrix = array(dim=c(61, n_cycles))
+
+for (i in 1:dim(medianEst)[3]) {
+  row_index = ((i - 1) %% 61) + 1
+  col_index = ceiling(i / 61)
+  rmse.matrix[row_index, col_index] = rmse(medianEst[,,i], man.LM[,,row_index])$RMSE
+} 
+
+  
